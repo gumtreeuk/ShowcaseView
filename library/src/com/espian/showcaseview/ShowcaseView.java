@@ -36,6 +36,8 @@ import com.espian.showcaseview.utils.PointAnimator;
 import com.github.espiandev.showcaseview.R;
 import com.nineoldandroids.animation.Animator;
 
+import java.lang.reflect.Field;
+
 import static com.espian.showcaseview.anim.AnimationUtils.AnimationEndListener;
 import static com.espian.showcaseview.anim.AnimationUtils.AnimationStartListener;
 
@@ -282,31 +284,53 @@ public class ShowcaseView extends RelativeLayout
         post(new Runnable() {
             @Override
             public void run() {
-                BaseReflector reflector = BaseReflector.getReflectorForActivity(activity);
-                ViewParent p = reflector.getActionBarView(); //ActionBarView
-                ActionBarViewWrapper wrapper = new ActionBarViewWrapper(p);
+                View homeButton = activity.findViewById(android.R.id.home);
+                if (homeButton == null) {
+                    // Thanks to @hameno for this
+                    int homeId = activity.getResources().getIdentifier("abs__home", "id", activity.getPackageName());
+                    if (homeId == 0) {
+                        homeId = activity.getResources().getIdentifier("home", "id", activity.getPackageName());
+                    }
+                    if (homeId != 0) {
+                        homeButton = activity.findViewById(homeId);
+                    }
+                }
+                if (homeButton == null)
+                    throw new RuntimeException("insertShowcaseViewWithType cannot be used when the theme " +
+                            "has no ActionBar");
+                ViewParent p = homeButton.getParent().getParent(); //ActionBarView
+
+                if (!p.getClass().getName().contains("ActionBarView")) {
+                    String previousP = p.getClass().getName();
+                    p = p.getParent();
+                    String throwP = p.getClass().getName();
+                    if (!p.getClass().getName().contains("ActionBarView"))
+                        throw new IllegalStateException("Cannot find ActionBarView for " +
+                                "Activity, instead found " + previousP + " and " + throwP);
+                }
+
+                Class abv = p.getClass(); //ActionBarView class
+                Class absAbv = abv.getSuperclass(); //AbsActionBarView class
+                //BaseReflector reflector = BaseReflector.getReflectorForActivity(activity);
+                //ViewParent p = reflector.getActionBarView(); //ActionBarView
+                //ActionBarViewWrapper wrapper = new ActionBarViewWrapper(p);
 
                 switch (itemType) {
                     case ITEM_ACTION_HOME:
-                        setShowcaseView(reflector.getHomeButton());
+                        setShowcaseView(homeButton);
                         break;
                     case ITEM_SPINNER:
-                        setShowcaseView(wrapper.getSpinnerView());
+                        showcaseSpinner(p, abv);
                         break;
                     case ITEM_TITLE:
-                        setShowcaseView(wrapper.getTitleView());
+                        showcaseTitle(p, abv);
                         break;
                     case ITEM_ACTION_ITEM:
-                        setShowcaseView(wrapper.getActionItem(actionItemId));
-                        break;
+                        //setShowcaseView(wrapper.getActionItem(actionItemId));
+                        //break;
                     case ITEM_ACTION_OVERFLOW:
-                        View overflow = wrapper.getOverflowView();
-                        // This check essentially checks if we are on a device with a legacy menu key
-                        if (overflow != null) {
-                            setShowcaseView(wrapper.getOverflowView());
-                        } else {
-                            setShowcasePosition(getLegacyOverflowPoint());
-                        }
+                        showcaseActionItem(p, absAbv, itemType, actionItemId);
+
                         break;
                     default:
                         Log.e("TAG", "Unknown item type");
@@ -314,6 +338,88 @@ public class ShowcaseView extends RelativeLayout
             }
         });
 
+    }
+
+    private void showcaseSpinner(ViewParent p, Class abv) {
+        try {
+            Field mSpinnerField = abv.getDeclaredField("mSpinner");
+            mSpinnerField.setAccessible(true);
+            View mSpinnerView = (View) mSpinnerField.get(p);
+            if (mSpinnerView != null) {
+                setShowcaseView(mSpinnerView);
+            }
+        } catch (NoSuchFieldException e) {
+            Log.e("TAG", "Failed to find actionbar spinner", e);
+        } catch (IllegalAccessException e) {
+            Log.e("TAG", "Failed to access actionbar spinner", e);
+
+        }
+    }
+
+    private void showcaseTitle(ViewParent p, Class abv) {
+        try {
+            Field mTitleViewField = abv.getDeclaredField("mTitleView");
+            mTitleViewField.setAccessible(true);
+            View titleView = (View) mTitleViewField.get(p);
+            if (titleView != null) {
+                setShowcaseView(titleView);
+            }
+        } catch (NoSuchFieldException e) {
+            Log.e("TAG", "Failed to find actionbar title", e);
+        } catch (IllegalAccessException e) {
+            Log.e("TAG", "Failed to access actionbar title", e);
+
+        }
+    }
+
+
+    private void showcaseActionItem(ViewParent p, Class absAbv, int itemType, int actionItemId) {
+        try {
+            Field mAmpField = absAbv.getDeclaredField("mActionMenuPresenter");
+            mAmpField.setAccessible(true);
+            Object mAmp = mAmpField.get(p);
+            if (itemType == ITEM_ACTION_OVERFLOW) {
+                // Finds the overflow button associated with the ActionMenuPresenter
+                Field mObField = mAmp.getClass().getDeclaredField("mOverflowButton");
+                mObField.setAccessible(true);
+                View mOb = (View) mObField.get(mAmp);
+                if (mOb != null)
+                    setShowcaseView(mOb);
+            } else {
+                // Want an ActionItem, so find it
+                Field mAmvField = mAmp.getClass().getSuperclass().getDeclaredField("mMenuView");
+                mAmvField.setAccessible(true);
+                Object mAmv = mAmvField.get(mAmp);
+
+                Field mChField;
+                if (mAmv.getClass().toString().contains("com.actionbarsherlock")) {
+                    // There are thousands of superclasses to traverse up
+                    // Have to get superclasses because mChildren is private
+                    mChField = mAmv.getClass().getSuperclass().getSuperclass()
+                            .getSuperclass().getSuperclass().getDeclaredField("mChildren");
+                } else if(mAmv.getClass().toString().contains("android.support.v7")) {
+                    mChField = mAmv.getClass().getSuperclass().getSuperclass()
+                            .getSuperclass().getDeclaredField("mChildren");
+                } else
+                    mChField = mAmv.getClass().getSuperclass().getSuperclass().getDeclaredField("mChildren");
+                mChField.setAccessible(true);
+                Object[] mChs = (Object[]) mChField.get(mAmv);
+                for (Object mCh : mChs) {
+                    if (mCh != null) {
+                        View v = (View) mCh;
+                        if (v.getId() == actionItemId)
+                            setShowcaseView(v);
+                    }
+                }
+            }
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        } catch (NoSuchFieldException e) {
+            e.printStackTrace();
+        } catch (NullPointerException npe) {
+            throw new RuntimeException("insertShowcaseViewWithType() must be called " +
+                    "after or during onCreateOptionsMenu() of the host Activity");
+        }
     }
 
     /**
