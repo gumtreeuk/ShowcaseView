@@ -278,7 +278,6 @@ public class ShowcaseView extends RelativeLayout
         return showcaseY;
     }
 
-    @Deprecated
     public void setShowcaseItem(final int itemType, final int actionItemId,
             final Activity activity) {
         post(new Runnable() {
@@ -866,7 +865,6 @@ public class ShowcaseView extends RelativeLayout
      * @param options    A set of options to customise the ShowcaseView
      * @return the created ShowcaseView instance
      */
-    @Deprecated
     public static ShowcaseView insertShowcaseViewWithType(int type, int itemId, Activity activity,
             int title, int detailText, ConfigOptions options) {
         ShowcaseView sv = new ShowcaseView(activity);
